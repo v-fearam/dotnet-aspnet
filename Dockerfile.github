@@ -1,0 +1,18 @@
+FROM ghcr.io/actions/actions-runner:latest
+
+USER root
+
+# Install basic tools needed for most builds
+RUN apt-get update && apt-get install -y \
+    curl \
+    jq \
+    git \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+USER runner
+
+ENTRYPOINT ["/entrypoint.sh"]
