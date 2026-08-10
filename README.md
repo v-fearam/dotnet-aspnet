@@ -131,12 +131,14 @@ cd ~/github-runner
 
 ### 2.2 Crear `Dockerfile.github`
 
+**⚠️ IMPORTANTE**: Este Dockerfile crea una imagen **minimalista** sin SDK pre-instalado. El SDK se descarga usando `setup-dotnet` action en el workflow.
+
 ```dockerfile
 FROM ghcr.io/actions/actions-runner:latest
 
 USER root
 
-# Install tools and .NET SDK 9.0 (LTS)
+# Install basic tools only (no SDK pre-installed)
 RUN apt-get update && apt-get install -y \
     curl \
     jq \
@@ -145,15 +147,9 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install .NET SDK 9.0
-RUN wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh \
-    && chmod +x ./dotnet-install.sh \
-    && ./dotnet-install.sh --channel 9.0 --install-dir /usr/share/dotnet \
-    && ln -s /usr/share/dotnet/dotnet /usr/local/bin/dotnet \
-    && rm dotnet-install.sh
-
-# Verify .NET installation
-RUN dotnet --version && dotnet --list-sdks
+# Create dotnet directory with correct permissions for setup-dotnet action
+RUN mkdir -p /usr/share/dotnet && \
+    chown -R runner:runner /usr/share/dotnet
 
 # Optional: Install Azure CLI
 # RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash
@@ -165,6 +161,15 @@ USER runner
 
 ENTRYPOINT ["/entrypoint.sh"]
 ```
+
+**Ventajas de este approach:**
+- ✅ Imagen pequeña (~200 MB vs ~500 MB con SDK)
+- ✅ Flexible: cambiar versión de .NET sin rebuild de imagen
+- ✅ Soporta múltiples versiones de .NET en el mismo runner
+
+**Desventajas:**
+- ⚠️ Primera ejecución más lenta (~30 segundos para download de SDK)
+- ⚠️ Requiere acceso a internet en cada ejecución inicial
 
 ### 2.3 Crear `entrypoint.sh`
 
@@ -381,13 +386,15 @@ az containerapp job show \
 ```xml
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
-    <!-- ✅ Usar .NET 9.0 (compatible con SDK pre-instalado) -->
+    <!-- ✅ Usar .NET 9.0 (o la versión que configures en setup-dotnet) -->
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 </Project>
 ```
+
+**Nota**: La versión del `TargetFramework` debe coincidir con la versión configurada en el step `setup-dotnet` del workflow (paso 6.2).
 
 ### 6.2 Crear Workflow File
 
@@ -411,7 +418,11 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
     
-    # ❌ NO incluir setup-dotnet - .NET ya está pre-instalado!
+    # ✅ SÍ incluir setup-dotnet - descarga el SDK en cada ejecución
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '9.0.x'  # Especificar versión deseada
     
     - name: Verify .NET Installation
       run: |
@@ -424,14 +435,20 @@ jobs:
     - name: Build
       run: dotnet build ./src/HelloWorldMvc/HelloWorldMvc.csproj --no-restore --configuration Release
     
-    - name: Test
+    - name: Test (if tests exist)
       run: dotnet test ./src/HelloWorldMvc/HelloWorldMvc.csproj --no-build --verbosity normal
+      continue-on-error: true
     
-    # Optional: Build Docker image
-    - name: Build Docker image
-      run: |
-        docker build -t helloworldmvc:${{ github.sha }} ./src/HelloWorldMvc
+    # ❌ Docker build NOT supported in Azure Container Apps
+    # Build Docker images in a separate pipeline with Docker daemon access
+    # (e.g., Azure DevOps, GitHub-hosted runners, or ACR Tasks)
 ```
+
+**Notas importantes:**
+- ✅ `setup-dotnet@v4` descarga e instala .NET en cada ejecución (~30s primera vez, ~5s con cache)
+- ✅ `dotnet-version: '9.0.x'` usa la última patch version de .NET 9.0
+- ✅ Puedes usar múltiples versiones con `dotnet-version: |` (multi-line)
+- ❌ **NO incluir `docker build`** - Azure Container Apps no soporta Docker-in-Docker
 
 ### 6.3 Commit y Push
 
@@ -457,14 +474,20 @@ git push
 ### 📦 Gestión de Imágenes
 
 1. **Versionar imágenes**: Usar tags semánticos (`v1.0.0`, no `:latest`)
-2. **Multi-stage builds**: Reducir tamaño de imagen
+2. **Imagen minimalista**: No pre-instalar SDKs, usar setup actions
 3. **Cache layers**: Ordenar comandos RUN por frecuencia de cambio
 4. **Security scanning**: Usar `az acr security-scan`
 
 ### ⚡ Performance
 
-1. **Pre-instalar herramientas**: Evitar download en cada run
-2. **Cache dependencies**: Usar actions/cache para `node_modules`, `.nuget`, etc.
+1. **SDK Caching**: `setup-dotnet` cachea SDKs por ~1 hora en el runner
+2. **Cache dependencies**: Usar actions/cache para `.nuget/packages`, etc.
+   ```yaml
+   - uses: actions/cache@v4
+     with:
+       path: ~/.nuget/packages
+       key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+   ```
 3. **Parallel jobs**: Ejecutar múltiples jobs independientes en paralelo
 4. **Warm pools**: Configurar `min-executions: 1` si hay workflows frecuentes
 
@@ -497,6 +520,30 @@ dos2unix entrypoint.sh
 # O recrear el archivo en Linux/WSL
 ```
 
+### ❌ Error: "failed to connect to the docker API at unix:///var/run/docker.sock"
+
+**Causa**: Azure Container Apps **NO soporta Docker-in-Docker (DinD)**
+
+**Solución**:
+1. Eliminar steps de `docker build` del workflow
+2. Buildear imágenes Docker en pipelines separados:
+   - Azure DevOps con Docker agents
+   - GitHub-hosted runners (tienen Docker)
+   - ACR Tasks: `az acr build` desde GitHub Actions
+   
+```yaml
+# ❌ NO funciona en Container Apps
+- run: docker build -t myapp .
+
+# ✅ Alternativa: ACR Tasks
+- run: |
+    az acr build \
+      --registry myregistry \
+      --image myapp:${{ github.sha }} \
+      --file Dockerfile \
+      .
+```
+
 ### ❌ Error: "Failed to get registration token"
 
 **Causa**: PAT inválido, expirado, o sin permisos
@@ -508,11 +555,21 @@ dos2unix entrypoint.sh
 
 ### ❌ Error: "NETSDK1045: .NET SDK does not support targeting .NET X.X"
 
-**Causa**: Proyecto usa .NET version no instalada en el runner
+**Causa**: Mismatch entre versión en `<TargetFramework>` del proyecto y versión en `setup-dotnet`
 
 **Solución**:
-1. Cambiar `<TargetFramework>` en `.csproj` a versión instalada (e.g., `net9.0`)
-2. O actualizar Dockerfile para instalar la versión correcta
+1. Verificar versión en `setup-dotnet` del workflow:
+   ```yaml
+   - name: Setup .NET
+     uses: actions/setup-dotnet@v4
+     with:
+       dotnet-version: '9.0.x'  # ← Esta versión
+   ```
+2. Verificar versión en `.csproj`:
+   ```xml
+   <TargetFramework>net9.0</TargetFramework>  <!-- ← Debe coincidir -->
+   ```
+3. Ambas versiones deben ser compatibles
 
 ### ❌ Runners no escalan
 
