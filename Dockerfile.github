@@ -2,13 +2,24 @@ FROM ghcr.io/actions/actions-runner:latest
 
 USER root
 
-# Install basic tools needed for most builds
+# Install basic tools and .NET SDK
 RUN apt-get update && apt-get install -y \
     curl \
     jq \
     git \
+    wget \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Install .NET SDK (latest LTS - .NET 9.0)
+RUN wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh \
+    && chmod +x ./dotnet-install.sh \
+    && ./dotnet-install.sh --channel 9.0 --install-dir /usr/share/dotnet \
+    && ln -s /usr/share/dotnet/dotnet /usr/local/bin/dotnet \
+    && rm dotnet-install.sh
+
+# Verify .NET installation
+RUN dotnet --version
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
