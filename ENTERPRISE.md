@@ -30,7 +30,7 @@ GitHub Org
 
 ## Diferencias vs. setup repo-level
 
-| | Repo-level (Free/Team) | Enterprise + Runner Groups |
+| | Repo-level (solo GitHub Free) | Runner Groups (Team / Enterprise) |
 |---|---|---|
 | Token API | `/repos/{owner}/{repo}/actions/runners/registration-token` | `/orgs/{org}/actions/runners/registration-token` |
 | `--url` en config.sh | `https://github.com/owner/repo` | `https://github.com/ORG_NAME` |
