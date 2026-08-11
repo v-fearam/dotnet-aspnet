@@ -56,9 +56,21 @@ El PAT necesita un scope adicional respecto al setup repo-level:
 | `Metadata` | Read-only | Read-only |
 | **`Organization self-hosted runners`** | ❌ | ✅ **Read and write** |
 
+**⚠️ Diferencia clave vs. repo-level**: el fine-grained token debe tener como `Resource owner` la **organización**, no tu cuenta personal. Sin esto, el permiso `Organization self-hosted runners` no aparece.
+
 1. Ir a `https://github.com/settings/tokens?type=beta`
-2. **Fine-grained token** con scope **Organization** (no solo repository)
-3. Agregar el permiso `Organization self-hosted runners: Read and write`
+2. Click **"Generate new token"** → **"Fine-grained tokens"**
+3. En **"Resource owner"** → cambiar de tu usuario a **la organización** (desplegable)
+   > Si no aparece la org, un admin de la org debe habilitar primero: `Org Settings → Personal access tokens → Allow fine-grained personal access tokens`
+4. **Expiration**: 90 days
+5. **Repository access**: All repositories (o seleccioná los específicos)
+6. **Organization permissions**:
+   - `Self-hosted runners`: Read and write
+7. **Repository permissions**:
+   - `Actions`: Read and write
+   - `Administration`: Read and write
+   - `Metadata`: Read-only
+8. Click **"Generate token"** y guardar
 
 ---
 
@@ -145,6 +157,69 @@ jobs:
     runs-on:
       group: azure-container-apps   # nombre del runner group
       labels: [ self-hosted ]       # opcional, filtra dentro del grupo
+```
+
+---
+
+## Múltiples grupos por stack (ej: .NET y Node.js)
+
+Podés tener tantos grupos como necesites, cada uno con su propia imagen y job:
+
+```
+GitHub Org
+  ├── Runner Group: "runners-dotnet"
+  │     ├── repo-api         (usa .NET)
+  │     └── repo-mvc         (usa .NET)
+  │
+  └── Runner Group: "runners-node"
+        ├── repo-frontend    (usa Node.js)
+        └── repo-bff         (usa Node.js)
+```
+
+En Azure: dos Container Apps Jobs, cada uno apuntando a una imagen distinta.
+El `entrypoint.sh` es el mismo — solo cambia `--runnergroup` y el `ORG_NAME`.
+
+```bash
+# Job para runners .NET
+az containerapp job create \
+  --name "runners-dotnet-job" \
+  --image "$ACR.azurecr.io/github-runner-dotnet:x.x" \
+  --env-vars "ORG_NAME=$ORG" "GITHUB_PAT=secretref:github-pat" \
+  # ... resto de parámetros igual
+
+# Job para runners Node
+az containerapp job create \
+  --name "runners-node-job" \
+  --image "$ACR.azurecr.io/github-runner-node:x.x" \
+  --env-vars "ORG_NAME=$ORG" "GITHUB_PAT=secretref:github-pat" \
+  # ...
+```
+
+En el script `entrypoint.sh`, parametrizá `--runnergroup` con una variable de entorno:
+
+```bash
+./config.sh \
+  --url "https://github.com/${ORG_NAME}" \
+  --token "${REGISTRATION_TOKEN}" \
+  --runnergroup "${RUNNER_GROUP}" \
+  --labels "azure-container-apps,self-hosted" \
+  --unattended --ephemeral --replace
+```
+
+Y en el workflow de cada repo, seleccionás el grupo correspondiente:
+
+```yaml
+# Repo .NET
+jobs:
+  build:
+    runs-on:
+      group: runners-dotnet
+
+# Repo Node.js
+jobs:
+  build:
+    runs-on:
+      group: runners-node
 ```
 
 ---
