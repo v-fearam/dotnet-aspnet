@@ -20,7 +20,7 @@ Esta guía documenta la implementación completa de GitHub Actions self-hosted r
 
 **Guías adicionales:**
 - 📄 [Agregar un nuevo repo al runner existente](ADD-REPO.md) — Free/Team, environment ya funcionando
-- 🏢 [GitHub Enterprise: Runner Groups](ENTERPRISE.md) — un job para toda la organización
+- 🏢 [GitHub Team/Enterprise: Runner Groups](ENTERPRISE.md) — un job para toda la organización (disponible desde GitHub Team/"Business")
 
 ---
 
@@ -644,11 +644,11 @@ az containerapp job logs show \
 
 ---
 
-## GitHub Enterprise: Runner Groups
+## GitHub Team/Enterprise: Runner Groups
 
 Ver guía completa: **[ENTERPRISE.md](ENTERPRISE.md)**
 
-Un único Container Apps Job para toda la organización, sin necesidad de un job por repo.
+Disponible desde el plan **GitHub Team** ("GitHub Business"). Un único Container Apps Job para toda la organización, sin necesidad de un job por repo.
 
 ---
 

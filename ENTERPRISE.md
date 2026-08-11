@@ -1,7 +1,14 @@
-# GitHub Enterprise: Runner Groups (Multi-Repo)
+# GitHub Team / Enterprise: Runner Groups (Multi-Repo)
 
-> **Para clientes con GitHub Enterprise Cloud o Enterprise Server.**  
-> Con Free/Team necesitás un Container Apps Job por repo. Con Enterprise podés usar un único job para toda la organización mediante **Runner Groups**.
+> **Para organizaciones con GitHub Team ("GitHub Business") o GitHub Enterprise.**  
+> Con Free necesitás un Container Apps Job por repo. Desde el plan **Team** ya podés usar Runner Groups para cubrir múltiples repos con un único job.
+
+| Plan | Runner Groups | Alcance |
+|---|---|---|
+| GitHub Free | ❌ | — |
+| **GitHub Team** ("Business") | ✅ | A nivel de organización |
+| GitHub Enterprise Cloud | ✅ | Org + Enterprise (multi-org) |
+| GitHub Enterprise Server | ✅ | Org + Enterprise (multi-org) |
 
 ---
 
