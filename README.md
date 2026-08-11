@@ -1,7 +1,7 @@
 # GitHub Actions Self-Hosted Runners en Azure Container Apps
 ## Guía Completa: Desde Cero hasta Producción
 
-Esta guía documenta la implementación completa de GitHub Actions self-hosted runners usando Azure Container Apps con .NET pre-instalado.
+Esta guía documenta la implementación completa de GitHub Actions self-hosted runners usando Azure Container Apps con Docker CLI y Azure CLI pre-instalados.
 
 ---
 
@@ -18,6 +18,10 @@ Esta guía documenta la implementación completa de GitHub Actions self-hosted r
 9. [Mejores Prácticas](#mejores-prácticas)
 10. [Troubleshooting](#troubleshooting)
 
+**Guías adicionales:**
+- 📄 [Agregar un nuevo repo al runner existente](ADD-REPO.md) — Free/Team, environment ya funcionando
+- 🏢 [GitHub Enterprise: Runner Groups](ENTERPRISE.md) — un job para toda la organización
+
 ---
 
 ## Arquitectura
@@ -30,8 +34,8 @@ GitHub Workflow Queue
 Azure Container Apps Job (0-10 replicas)
         ↓
 [Ephemeral Runners]
-    ├── .NET SDK 9.0 (pre-installed)
-    ├── Docker CLI
+    ├── .NET SDK (via setup-dotnet action)
+    ├── Docker CLI + GitHub CLI (gh)
     ├── Azure CLI (opcional)
     └── Custom tools
 ```
@@ -40,7 +44,7 @@ Azure Container Apps Job (0-10 replicas)
 - ✅ Autoscaling 0-N basado en queue de workflows
 - ✅ Runners efímeros (se destruyen después de cada job)
 - ✅ VNet integration para acceso a recursos privados
-- ✅ SDKs pre-instalados (sin download en cada run)
+- ✅ Docker CLI, GitHub CLI (gh) y Azure CLI pre-instalados en la imagen
 
 ---
 
@@ -131,28 +135,36 @@ cd ~/github-runner
 
 ### 2.2 Crear `Dockerfile.github`
 
-**⚠️ IMPORTANTE**: Este Dockerfile crea una imagen **minimalista** sin SDK pre-instalado. El SDK se descarga usando `setup-dotnet` action en el workflow.
+**ℹ️ NOTA**: Este Dockerfile instala Docker CLI y Azure CLI en la imagen. El .NET SDK **no** se pre-instala — se descarga usando `setup-dotnet` action en el workflow.
 
 ```dockerfile
 FROM ghcr.io/actions/actions-runner:latest
 
 USER root
 
-# Install basic tools only (no SDK pre-installed)
+# Install basic tools, Docker CLI, and GitHub CLI (no .NET SDK pre-installed)
 RUN apt-get update && apt-get install -y \
     curl \
     jq \
     git \
     wget \
+    ca-certificates \
+    gnupg \
+    lsb-release \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+    && chmod a+r /etc/apt/keyrings/docker.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list \
+    && apt-get update && apt-get install -y docker-ce-cli gh \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Azure CLI
+RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash
 
 # Create dotnet directory with correct permissions for setup-dotnet action
 RUN mkdir -p /usr/share/dotnet && \
     chown -R runner:runner /usr/share/dotnet
-
-# Optional: Install Azure CLI
-# RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
@@ -163,7 +175,7 @@ ENTRYPOINT ["/entrypoint.sh"]
 ```
 
 **Ventajas de este approach:**
-- ✅ Imagen pequeña (~200 MB vs ~500 MB con SDK)
+- ✅ Imagen sin .NET SDK (~400 MB con Docker CLI + Azure CLI vs ~700 MB con SDK)
 - ✅ Flexible: cambiar versión de .NET sin rebuild de imagen
 - ✅ Soporta múltiples versiones de .NET en el mismo runner
 
@@ -230,6 +242,32 @@ az acr build \
   . \
   --no-logs
 ```
+
+### 2.5 Actualizar Imagen y Job (cuando hay cambios)
+
+Cuando modifiques el `Dockerfile.github`, incrementá el tag y actualizá el job:
+
+**Paso 1: Build nueva imagen en ACR** (~3-4 minutos)
+
+```bash
+az acr build \
+  --registry testselfhostedrunner \
+  --image github-actions-runner:4.0 \
+  --file Dockerfile.github \
+  . \
+  --no-logs
+```
+
+**Paso 2: Actualizar el Container Apps Job con la nueva imagen** (~10 segundos)
+
+```bash
+az containerapp job update \
+  --name github-actions-runner-job \
+  --resource-group rg-far-jobs-sample \
+  --image testselfhostedrunner.azurecr.io/github-actions-runner:4.0
+```
+
+> 💡 Reemplazá `4.0` con el tag correspondiente a cada nueva versión. No uses `:latest` en producción — los tags semánticos permiten rollback.
 
 ---
 
@@ -603,6 +641,14 @@ az containerapp job logs show \
   --execution "$EXECUTION_NAME" \
   --follow
 ```
+
+---
+
+## GitHub Enterprise: Runner Groups
+
+Ver guía completa: **[ENTERPRISE.md](ENTERPRISE.md)**
+
+Un único Container Apps Job para toda la organización, sin necesidad de un job por repo.
 
 ---
 
