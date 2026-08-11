@@ -24,7 +24,10 @@ jobs:
       run: |
         dotnet --version
         dotnet --list-sdks
-    
+    - name: Verify Docker & GitHub CLI Installation
+      run: |
+        docker --version
+        gh --version 
     - name: Restore dependencies
       run: dotnet restore ./src/HelloWorldMvc/HelloWorldMvc.csproj
     
